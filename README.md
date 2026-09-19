@@ -165,13 +165,3 @@ If given one additional week to enhance the system, the top high-value improveme
 5. **Comprehensive Automated Test Suite**: Add end-to-end integration tests using Playwright to continuously verify multi-tenant isolation boundaries and state transition locks.
 
 ---
-
-## 8. Screenshots
-
-*Placeholder: Add screenshots of the following views after running the application locally:*
-
-1. `/login` — Login page with Demo Accounts autofill panel.
-2. `/dashboard` — Firm client overview cards.
-3. `/clients/[id]` — Client document checklist with status badges.
-4. `/documents/[id]` — Document detail page, correction callout, review actions, and full Audit Trail timeline.
-5. `/audit` — Firm-wide audit feed.
