@@ -1,167 +1,204 @@
-# Obliq Mini Audit Document Review System — FE-2 Evaluation Submission
+# ClearAudit
 
-## 1. Overview
-This repository contains a working, self-contained prototype of an **Audit Document Review System** built for Indian Chartered Accountant (CA) firms as part of the Obliq FE-2 evaluation. Designed with extreme scope discipline (*"A small working product is better than a large unfinished product"*), the system focuses on a rock-solid core document review workflow, strict multi-tenant isolation between audit firms, atomic status state machine transitions, and complete immutable audit trails.
+A small document review app for audit teams. Staff upload documents, reviewers check them, and every important action is recorded.
 
----
+The project is built with Next.js, Prisma, and PostgreSQL. It includes two demo firms so the tenant boundary can be tested from the UI and from the system tests.
 
-## 2. Setup Instructions
+<details>
+<summary>What is included</summary>
 
-### Prerequisites
-- Node.js (v18+ or v20+) & npm
-- PostgreSQL database (or a free cloud instance from Neon / Supabase)
+- Staff can add document requirements and upload new versions.
+- Reviewers can start a review, request a correction with a reason, or approve a document.
+- Approved documents cannot be changed.
+- Each firm sees only its own clients, documents, versions, and audit events.
+- The audit timeline shows who did what and when.
 
-### Quick Start
+</details>
 
-1. **Clone the repository and install dependencies**:
-   ```bash
-   git clone <repository-url>
-   cd obliq3
-   npm install
-   ```
+<details>
+<summary>Run it locally</summary>
 
-2. **Configure Environment Variables**:
-   Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-   Set your `DATABASE_URL` (PostgreSQL connection string) and `JWT_SECRET`:
-   ```env
-   DATABASE_URL="postgresql://user:password@ep-sample-123456.us-east-2.aws.neon.tech/obliq_db?sslmode=require"
-   JWT_SECRET="obliq_super_secret_jwt_key_2026_audit_review"
-   ```
+### Requirements
 
-3. **Run Database Migrations & Seed**:
-   ```bash
-   npx prisma db push
-   npx prisma db seed
-   ```
+- Node.js 18 or newer
+- A PostgreSQL database
 
-4. **Run Automated System Tests**:
-   ```bash
-   npm test
-   ```
-   *Executes 15 automated test assertions covering state machine transitions, multi-tenant boundary security, bcrypt authentication, and transactional audit trails.*
+### Install
 
-5. **Start Development Server**:
-   ```bash
-   npm run dev
-   ```
-   Open `http://localhost:3000` in your browser.
-
----
-
-### Demo Login Credentials
-
-All seeded accounts use password `password123`. The login page (`/login`) includes 1-click autofill buttons for convenience:
-
-| Firm | Name | Role | Email | Password |
-| :--- | :--- | :--- | :--- | :--- |
-| **Firm A (ABC & Co.)** | Rohit Sharma | STAFF | `rohit@abc.co` | `password123` |
-| **Firm A (ABC & Co.)** | Aman Gupta | REVIEWER | `aman@abc.co` | `password123` |
-| **Firm B (XYZ & Co.)** | Priya Verma | STAFF | `priya@xyz.co` | `password123` |
-| **Firm B (XYZ & Co.)** | Karan Mehta | REVIEWER | `karan@xyz.co` | `password123` |
-
----
-
-## 3. Architecture Diagram
-
-```
-+-------------------------------------------------------------------------+
-|                              REACT FRONTEND                             |
-|    Next.js 14 App Router (Tailwind CSS, Client-side Size Validation)    |
-+------------------------------------+------------------------------------+
-                                     |  HTTP-Only Cookie (Signed JWT)
-                                     v
-+-------------------------------------------------------------------------+
-|                           API ROUTE HANDLERS                            |
-|  - Auth Middleware & Session Extraction: getSessionOrThrow(req)         |
-|  - Role-Based Access Control (RBAC): requireRole(session, allowedRoles) |
-|  - Server-Side Validation: Zod Schemas                                  |
-|  - Status State Machine Engine: assertValidTransition(status, action)   |
-|  - Tenant Isolation Layer: scopedPrisma(session.firmId)                 |
-+------------------------------------+------------------------------------+
-                                     |  Atomic $transaction
-                                     v
-+-------------------------------------------------------------------------+
-|                           PRISMA ORM & DATABASE                         |
-|  PostgreSQL Database (Firm, User, Client, Document, DocumentVersion,    |
-|  AuditEvent with @@index([firmId]) on every tenant model)               |
-+-------------------------------------------------------------------------+
+```bash
+git clone <repository-url>
+cd obliq3
+npm install
 ```
 
----
+Create `.env.local` in the project root:
 
-## 4. Tenant Isolation Explanation
-
-Tenant isolation is critical when building compliance software for CA firms handling sensitive financial data. In this system, tenant boundary security is enforced using a multi-layered defense-in-depth architecture:
-
-1. **JWT-Derived Firm Identity as Single Source of Truth**:
-   Authentication issues a signed JWT token stored inside an `httpOnly`, `sameSite=lax`, `secure` cookie containing `{ userId, firmId, role }`. The `firmId` is extracted server-side inside `getSessionOrThrow(req)`. Client inputs (query parameters or request bodies) are **never** trusted for scoping.
-
-2. **Centralized Query Scoping (`scopedPrisma`)**:
-   To prevent developers from forgetting `firmId` filters in individual endpoints, data access for `Client`, `Document`, `DocumentVersion`, and `AuditEvent` models is centralized through `scopedPrisma(session.firmId)` in `lib/db.ts`. Every database read and count automatically injects `{ firmId: session.firmId }` into the query predicate.
-
-3. **Defense-in-Depth Resource Check**:
-   On single-resource fetches (e.g. `GET /api/documents/[id]`), after querying the database, the API handler explicitly re-validates `if (document.firmId !== session.firmId) return 404`. Returning `404 Not Found` instead of `403 Forbidden` prevents malicious actors from discovering the existence of resource IDs belonging to competing firms.
-
-4. **Authentication vs. Authorization Separation**:
-   Authentication proves *who you are*; Authorization dictates *what you can touch*. Hiding action buttons on the frontend is merely a UX convenience — security is strictly enforced inside Next.js API route handlers using `requireRole(session, allowedRoles)` and `assertValidTransition()`.
-
----
-
-## 5. Status State Machine Diagram
-
-```
-               +-------------------+
-               |      PENDING      |
-               +---------+---------+
-                         |
-                         | (Staff Uploads File)
-                         v
-               +-------------------+
-               |     UPLOADED      |
-               +---------+---------+
-                         |
-                         | (Reviewer Starts Review)
-                         v
-               +-------------------+
-               |   UNDER_REVIEW    |
-               +----+---------+----+
-                    |         |
- (Reviewer Approves)|         | (Reviewer Requests Correction
-                    |         |  with Mandatory Reason)
-                    v         v
-         +----------+---+   +-+-------------------+
-         |   APPROVED   |   | CORRECTION_REQUIRED |
-         | (Terminal)   |   +----------+----------+
-         +--------------+              |
-                                       | (Staff Re-Uploads File)
-                                       +-------> [Loops back to UPLOADED]
+```env
+DATABASE_URL="postgresql://user:password@host/database?sslmode=require"
+JWT_SECRET="replace-this-with-a-long-random-value"
 ```
 
----
+Create the tables and demo data:
 
-## 6. AI Tools Used
+```bash
+npx prisma db push
+npx prisma db seed
+```
 
-AI Tools Used:
-ChatGPT: N/A
-Claude: N/A
-Gemini: Gemini 1.5 Pro / 2.0 Flash (via Google Antigravity Agentic IDE)
-Cursor: N/A
-GitHub Copilot: N/A
-How AI was used: Used Google Antigravity (Gemini-powered AI assistant) for architectural planning, designing the Prisma multi-tenant schema, constructing the status transition state machine, implementing defense-in-depth tenant isolation checks, and building the Google Sans UI system with Framer Motion animated micro-interactions.
+Start the app:
 
----
+```bash
+npm run dev
+```
 
-## 7. What Would You Improve with One More Week?
+Open <http://localhost:3000>.
 
-If given one additional week to enhance the system, the top high-value improvements would be:
+> `prisma db seed` clears the existing records before inserting the demo data. Use it only with a development or demo database.
 
-1. **Cloud Blob Storage**: Transition document file payloads from Postgres Base64 strings to AWS S3 / Vercel Blob with secure pre-signed URLs for scalable file handling.
-2. **Automated Document Pre-validation**: Integrate OCR/LLM sanity checks on file upload to verify document types and flag basic discrepancies (e.g., page count checks or GSTR-3B vs GSTR-2B mismatches) before human review.
-3. **Automated Staff & Client Notifications**: Trigger automated WhatsApp/email notifications to staff members when a reviewer flags a document as `Correction Required`.
-4. **Bulk Zipped Export**: Allow reviewers to export all approved audit documents for a client in a single organized ZIP package ready for IT portal filing.
-5. **Comprehensive Automated Test Suite**: Add end-to-end integration tests using Playwright to continuously verify multi-tenant isolation boundaries and state transition locks.
+</details>
 
----
+<details>
+<summary>Demo accounts</summary>
+
+All accounts use the password `password123`.
+
+| Firm | User | Role | Email |
+| --- | --- | --- | --- |
+| ABC & Co. | Rohit Sharma | Staff | `rohit@abc.co` |
+| ABC & Co. | Aman Gupta | Reviewer | `aman@abc.co` |
+| XYZ & Co. | Priya Verma | Staff | `priya@xyz.co` |
+| XYZ & Co. | Karan Mehta | Reviewer | `karan@xyz.co` |
+
+To check tenant isolation, sign in as a user from either firm and confirm that the other firm's records are not visible.
+
+</details>
+
+<details>
+<summary>How the app is put together</summary>
+
+```mermaid
+flowchart TD
+    Browser[Browser] --> Routes[Next.js pages and API routes]
+    Routes --> Auth[Session and role checks]
+    Auth --> Scope[Queries scoped to the user's firm]
+    Scope --> Rules[Document transition rules]
+    Rules --> Database[(PostgreSQL via Prisma)]
+    Rules --> Audit[Audit events]
+    Audit --> Database
+```
+
+The browser sends requests with an httpOnly session cookie. The server gets the firm ID from that session, checks the user's role, and applies the firm ID to database queries. The browser is not trusted to provide the firm ID.
+
+</details>
+
+<details>
+<summary>Document review flow</summary>
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    PENDING --> UPLOADED: Staff uploads a file
+    UPLOADED --> UNDER_REVIEW: Reviewer starts review
+    UNDER_REVIEW --> APPROVED: Reviewer approves
+    UNDER_REVIEW --> CORRECTION_REQUIRED: Reviewer gives a reason
+    CORRECTION_REQUIRED --> UPLOADED: Staff uploads a new version
+    APPROVED --> [*]
+```
+
+Every status change and upload is written with the action, user, firm, document, and time. A correction request must include a note. `APPROVED` is the final state.
+
+</details>
+
+<details>
+<summary>Tenant isolation</summary>
+
+```mermaid
+sequenceDiagram
+    actor A as Firm A user
+    actor B as Firm B user
+    participant API as API route
+    participant DB as PostgreSQL
+
+    A->>API: Request document
+    API->>DB: Find document by ID and Firm A ID
+    DB-->>A: Document details
+
+    B->>API: Request the same document
+    API->>DB: Find document by ID and Firm B ID
+    DB-->>B: Not found
+```
+
+The firm ID comes from the signed session. Shared query helpers add that ID to reads and writes for clients, documents, versions, and audit events. A document from another firm is returned as not found rather than exposed.
+
+</details>
+
+<details>
+<summary>Useful commands</summary>
+
+```bash
+npm run dev       # Start the development server
+npm run build     # Create a production build
+npm start         # Run the production build
+npm test          # Run the system checks
+npm run lint      # Run ESLint
+```
+
+</details>
+
+<details>
+<summary>Deploy for free for an evaluation</summary>
+
+The simplest free setup is **Vercel Hobby for the Next.js app** and a **free Neon PostgreSQL database**. Both have usage limits, but they are suitable for a small evaluation demo. Vercel Hobby is intended for personal or non-commercial use.
+
+### 1. Create the database
+
+1. Create a project at [Neon](https://neon.tech/).
+2. Copy its pooled PostgreSQL connection string.
+3. In the project folder, create `.env.local`:
+
+```env
+DATABASE_URL="your-neon-connection-string"
+JWT_SECRET="use-a-long-random-production-value"
+```
+
+4. Create the schema and demo records in Neon:
+
+```bash
+npx prisma db push
+npx prisma db seed
+```
+
+### 2. Deploy the app
+
+1. Push the repository to GitHub.
+2. Import it at [Vercel](https://vercel.com/new).
+3. Keep the detected framework as Next.js.
+4. Add `DATABASE_URL` and `JWT_SECRET` under the Vercel project environment variables. Add them for **Production**, and for **Preview** too if evaluators will use preview deployments.
+5. Deploy.
+
+Vercel will run the existing Next.js build. The database must already contain the schema and seed records because the repository does not run `prisma db push` or `prisma db seed` automatically during a deployment.
+
+### 3. Test the public URL
+
+- Open `/login`.
+- Sign in with one of the demo accounts above.
+- Try the staff upload flow and reviewer flow.
+- Run `npm test` locally against the same Neon database if you want to verify tenant isolation and status transitions before sharing the URL.
+
+For a disposable evaluator demo, this is enough. Do not use the seeded passwords or a shared free database for real audit documents.
+
+</details>
+
+<details>
+<summary>Project layout</summary>
+
+```text
+app/                  Pages and API routes
+components/           Reusable UI components
+lib/                  Authentication, database access, and audit helpers
+prisma/schema.prisma  Database models and status values
+prisma/seed.ts        Demo firms, users, clients, and documents
+scripts/test-system.ts System checks
+```
+
+</details>
